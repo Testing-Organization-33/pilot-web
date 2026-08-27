@@ -10,5 +10,5 @@
     "health"
   ],
   "fail_ci": null,
-  "fail_deploy": "health"
+  "fail_deploy": null
 }
