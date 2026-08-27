@@ -1,0 +1,4 @@
+{
+  "_comment": "Mirrors dash-frontend-local consuming a pulled snapshot of the BE GraphQL schema. Bump requires_api_contract to stage a cross-repo break: if pilot-web ships expecting v2 while pilot-api is still on v1, prod is broken by ordering, not by either repo's own code.",
+  "requires_api_contract": 1
+}

@@ -1,0 +1,25 @@
+name: CI
+on:
+  push:
+    branches: [development]
+  pull_request:
+    branches: [development, main]
+  workflow_dispatch:
+
+# One required-check context, mirroring dash-frontend-local's single `build` check.
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          FAIL=$(jq -r '.fail_ci // "null"' pilot-config.json)
+          echo "armed failure: $FAIL"
+          if [ "$FAIL" = "build" ]; then
+            echo "::error::build failed (armed via pilot-config.json)"
+            exit 1
+          fi
+          echo "expects pilot-api contract v$(jq -r '.requires_api_contract' contract.json)"
+          echo "build passed"

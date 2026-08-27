@@ -1,0 +1,82 @@
+name: Deploy to Prod
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit/tag to deploy. Empty = current main."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Resolve target
+        id: target
+        run: |
+          SHA=$(git rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "### Deploying \`$SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build
+        run: |
+          set -e
+          FAIL=$(jq -r '.fail_deploy // "null"' pilot-config.json)
+          if [ "$FAIL" = "build" ]; then
+            echo "::error::build failed (armed via pilot-config.json)"
+            exit 1
+          fi
+          echo "build ok"
+
+      - name: Reload service
+        id: reload
+        run: echo "service reloaded on ${{ steps.target.outputs.sha }}"
+
+      - name: Health check
+        run: |
+          FAIL=$(jq -r '.fail_deploy // "null"' pilot-config.json)
+          if [ "$FAIL" = "health" ]; then
+            echo "::error::failed /health after deploy"
+            exit 1
+          fi
+          echo "healthy"
+
+      - name: Publish deploy state
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          DEPLOYED="not-advanced"
+          [ "${{ steps.reload.outcome }}" = "success" ] && DEPLOYED="${{ steps.target.outputs.sha }}"
+
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          TMP=$(mktemp -d)
+          if git clone --depth 1 --branch deploy-state "$REMOTE" "$TMP" 2>/dev/null; then
+            cd "$TMP"
+          else
+            git clone --depth 1 "$REMOTE" "$TMP"
+            cd "$TMP"
+            git checkout --orphan deploy-state
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          jq -n --arg d "$DEPLOYED" --arg r "${{ job.status }}" \
+                --arg run "${{ github.run_id }}" --arg ts "$(date -u +%FT%TZ)" \
+            '{deployed_sha:$d, schema_version:"n/a", last_result:$r, run_id:$run, ts:$ts}' > state.json
+
+          cat state.json >> "$GITHUB_STEP_SUMMARY"
+          git config user.name "pilot-deploy"
+          git config user.email "pilot-deploy@users.noreply.github.com"
+          git add state.json
+          git commit -m "deploy state: ${{ job.status }} @ $DEPLOYED" || exit 0
+          git push origin HEAD:deploy-state
